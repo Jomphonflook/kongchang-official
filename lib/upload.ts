@@ -1,30 +1,53 @@
 import { promises as fs } from "fs";
 import path from "path";
-import crypto from "crypto";
+import { v2 as cloudinary } from "cloudinary";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 export class UploadError extends Error {}
 
-function guessExt(type: string): string {
-  switch (type) {
-    case "image/jpeg":
-      return ".jpg";
-    case "image/png":
-      return ".png";
-    case "image/webp":
-      return ".webp";
-    case "image/gif":
-      return ".gif";
-    default:
-      return ".jpg";
+// Configure Cloudinary SDK
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true,
+});
+
+// Helper to extract Cloudinary public_id from URL
+function getCloudinaryPublicId(url: string): string | null {
+  try {
+    const parts = url.split("/upload/");
+    if (parts.length < 2) return null;
+
+    let pathAfterUpload = parts[1];
+    // Remove the version segment (e.g. "v1570534579/") if it exists
+    if (pathAfterUpload.startsWith("v")) {
+      const slashIndex = pathAfterUpload.indexOf("/");
+      if (slashIndex !== -1) {
+        pathAfterUpload = pathAfterUpload.slice(slashIndex + 1);
+      }
+    }
+
+    // Remove the file extension (e.g. ".jpg")
+    const dotIndex = pathAfterUpload.lastIndexOf(".");
+    if (dotIndex !== -1) {
+      pathAfterUpload = pathAfterUpload.slice(0, dotIndex);
+    }
+
+    return pathAfterUpload;
+  } catch {
+    return null;
   }
 }
 
-// Saves an uploaded image under /public/uploads/<subdir>/ and returns a path
-// served via /api/uploads/ so it bypasses Next.js dev static-file caching.
+// Saves an uploaded image to Cloudinary and returns its secure URL.
 export async function saveUploadedImage(file: File, subdir: string): Promise<string> {
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+    throw new UploadError("ระบบ Cloudinary ยังไม่ได้ตั้งค่าในไฟล์ environment (.env)");
+  }
+
   if (!ALLOWED_TYPES.includes(file.type)) {
     throw new UploadError(
       `ไฟล์ประเภท "${file.type || "ไม่ทราบ"}" ไม่รองรับ (รองรับเฉพาะรูปภาพ JPG, PNG, WEBP, GIF)`
@@ -35,12 +58,23 @@ export async function saveUploadedImage(file: File, subdir: string): Promise<str
   }
 
   const bytes = Buffer.from(await file.arrayBuffer());
-  const ext = path.extname(file.name).toLowerCase() || guessExt(file.type);
-  const filename = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext}`;
-  const dir = path.join(process.cwd(), "public", "uploads", subdir);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, filename), bytes);
-  return `/api/uploads/${subdir}/${filename}`;
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: `activity-gallery/${subdir}`,
+      },
+      (error, result) => {
+        if (error) {
+          console.error("Cloudinary upload error:", error);
+          reject(new UploadError("อัปโหลดรูปภาพไปยัง Cloudinary ล้มเหลว"));
+        } else {
+          resolve(result!.secure_url);
+        }
+      }
+    );
+    uploadStream.end(bytes);
+  });
 }
 
 export async function saveUploadedImages(files: File[], subdir: string): Promise<string[]> {
@@ -55,6 +89,20 @@ export async function saveUploadedImages(files: File[], subdir: string): Promise
 
 export async function deleteUploadedFile(publicPath: string): Promise<void> {
   if (!publicPath) return;
+
+  // If it's a Cloudinary URL, delete it from Cloudinary
+  if (publicPath.includes("cloudinary.com")) {
+    const publicId = getCloudinaryPublicId(publicPath);
+    if (publicId) {
+      try {
+        await cloudinary.uploader.destroy(publicId);
+      } catch (err) {
+        console.error("Failed to delete Cloudinary asset:", err);
+      }
+    }
+    return;
+  }
+
   // Support both /uploads/... (old) and /api/uploads/... (new)
   let relativePath: string | null = null;
   if (publicPath.startsWith("/api/uploads/")) {
