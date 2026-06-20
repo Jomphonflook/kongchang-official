@@ -1,0 +1,28 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+
+# local env files
+.env*.local
+
+# uploaded files (kept locally, not in version control)
+/public/uploads/*
+!/public/uploads/tickets/.gitkeep
+!/public/uploads/activities/.gitkeep
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
