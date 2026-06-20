@@ -19,9 +19,9 @@ npm-debug.log*
 .env*.local
 
 # uploaded files (kept locally, not in version control)
-/public/uploads/*
-!/public/uploads/tickets/.gitkeep
-!/public/uploads/activities/.gitkeep
+# /public/uploads/*
+# !/public/uploads/tickets/.gitkeep
+# !/public/uploads/activities/.gitkeep
 
 # typescript
 *.tsbuildinfo
